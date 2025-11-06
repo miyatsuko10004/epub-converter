@@ -25,18 +25,33 @@ def get_series_info_interactively() -> List[str]:
     
     if series_name:
         args.extend(["--series", series_name])
-        
-        # 巻数を聞く
-        series_index = input("🔢 巻数 (シリーズインデックス) を入力してください (省略する場合はEnter): ").strip()
-        if series_index and series_index.isdigit():
-            args.extend(["--series-index", series_index])
-        elif series_index:
-             print("⚠️ 巻数が数字ではないため、巻数の設定はスキップします。")
-             
-        print("✅ シリーズ情報が設定されました。")
+        print("✅ シリーズ名が設定されました。")
     else:
-        print("--- シリーズ情報の設定をスキップします ---")
+        print("--- シリーズ名設定をスキップします ---")
         
+    return args
+
+
+def get_series_index_interactively(filename: str) -> List[str]:
+    """
+    ユーザーから指定されたファイルの巻数をインタラクティブに取得します。
+
+    Args:
+        filename: 現在処理しているファイルの名前。
+
+    Returns:
+        ebook-convertに渡す巻数関連のオプションリスト。
+    """
+    print(f"\n--- ファイル: {filename} の巻数設定 ---")
+    args: List[str] = []
+    series_index = input("🔢 巻数 (シリーズインデックス) を入力してください (省略する場合はEnter): ").strip()
+    if series_index and series_index.isdigit():
+        args.extend(["--series-index", series_index])
+        print(f"✅ {filename} の巻数が設定されました。")
+    elif series_index:
+        print(f"⚠️ {filename} の巻数が数字ではないため、巻数の設定はスキップします。")
+    else:
+        print(f"--- {filename} の巻数設定をスキップします ---")
     return args
 
 
@@ -92,6 +107,11 @@ def convert_mobi_file(mobi_file_path: Path, output_dir: Path, global_series_args
     extra_args.extend(global_series_args)
 
     print(f"\n[MOBI変換開始] ファイル: {mobi_file_path.name}")
+    
+    # ファイルごとの巻数情報を取得
+    file_series_index_args = get_series_index_interactively(mobi_file_path.name)
+    extra_args.extend(file_series_index_args)
+
     execute_conversion(mobi_file_path, output_epub_path, extra_args)
 
 
@@ -113,6 +133,11 @@ def convert_jpeg_folder(jpeg_dir_path: Path, output_dir: Path, global_series_arg
     extra_args.extend(global_series_args)
 
     print(f"\n[JPEGフォルダ変換開始] フォルダ: {jpeg_dir_path.name}")
+
+    # フォルダごとの巻数情報を取得
+    folder_series_index_args = get_series_index_interactively(jpeg_dir_path.name)
+    extra_args.extend(folder_series_index_args)
+
     execute_conversion(jpeg_dir_path, output_epub_path, extra_args)
 
 
