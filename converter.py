@@ -104,10 +104,10 @@ def convert_mobi_file(mobi_file_path: Path, output_dir: Path, global_series_args
     execute_conversion(mobi_file_path, output_epub_path, extra_args)
 
 
-def convert_jpeg_folder(jpeg_dir_path: Path, output_dir: Path, global_series_args: List[str]):
-    """JPEG画像を含むディレクトリをEPUB（コミック形式推奨、メタデータ設定を含む）に変換します。"""
+def convert_cbz_file(cbz_file_path: Path, output_dir: Path, global_series_args: List[str]):
+    """CBZファイルをEPUB（コミック形式推奨、メタデータ設定を含む）に変換します。"""
     
-    base_name = jpeg_dir_path.name 
+    base_name = cbz_file_path.stem 
     output_epub_path = output_dir / f"{base_name}.epub"
     
     extra_args = [
@@ -119,24 +119,25 @@ def convert_jpeg_folder(jpeg_dir_path: Path, output_dir: Path, global_series_arg
     ]
     extra_args.extend(global_series_args)
 
-    print(f"\n[JPEGフォルダ変換開始] フォルダ: {jpeg_dir_path.name}")
+    print(f"\n[CBZ変換開始] ファイル: {cbz_file_path.name}")
 
-    folder_series_index_args = get_series_index_interactively(jpeg_dir_path.name)
-    extra_args.extend(folder_series_index_args)
+    file_series_index_args = get_series_index_interactively(cbz_file_path.name)
+    extra_args.extend(file_series_index_args)
 
-    execute_conversion(jpeg_dir_path, output_epub_path, extra_args)
+    execute_conversion(cbz_file_path, output_epub_path, extra_args)
 
 
 def extract_archive(archive_path: Path, temp_dir: Path) -> Path | None:
     """
-    指定されたZIP/RARファイルを一時ディレクトリに解凍し、解凍されたフォルダのPathを返します。
+    指定されたZIP/RARファイルを一時ディレクトリに解凍し、解凍された画像からCBZを作成してそのPathを返します。
     """
     
     print(f"🔄 アーカイブファイルを解凍中: {archive_path.name}")
     
     extract_target_dir_name = archive_path.stem
     extract_target_path = temp_dir / extract_target_dir_name
-    
+    cbz_output_path = temp_dir / f"{extract_target_dir_name}.cbz" # CBZファイルの出力パス
+
     try:
         extract_target_path.mkdir(parents=True, exist_ok=True)
         archive_suffix = archive_path.suffix.lower()
@@ -160,7 +161,12 @@ def extract_archive(archive_path: Path, temp_dir: Path) -> Path | None:
             return None
             
         print(f"✅ 解凍完了: -> {extract_target_path.name}/")
-        return extract_target_path
+        
+        # 解凍されたフォルダからCBZを作成
+        if create_cbz_from_folder(extract_target_path, cbz_output_path):
+            return cbz_output_path
+        else:
+            return None
     
     except rarfile.RarExecError:
         print(f"❌ RAR解凍エラー: 'unrar' コマンドが見つからないか、実行できませんでした。")
@@ -168,10 +174,40 @@ def extract_archive(archive_path: Path, temp_dir: Path) -> Path | None:
         return None
     except Exception as e:
         print(f"❌ アーカイブファイルの解凍中にエラーが発生しました: {e}")
-        # 解凍に失敗したディレクトリは削除
+        return None
+    finally:
+        # 解凍に成功/失敗に関わらず、一時展開ディレクトリは削除
         if extract_target_path.exists():
             shutil.rmtree(extract_target_path)
-        return None
+            print(f"🧹 一時展開フォルダを削除しました: {extract_target_path.name}")
+
+
+def create_cbz_from_folder(image_folder_path: Path, output_cbz_path: Path) -> bool:
+    """
+    指定されたフォルダ内の画像ファイルからCBZアーカイブを作成します。
+    画像ファイルはファイル名でソートされ、CBZに追加されます。
+    """
+    print(f"📦 CBZアーカイブを作成中: {image_folder_path.name}/ -> {output_cbz_path.name}")
+    try:
+        with zipfile.ZipFile(output_cbz_path, 'w', zipfile.ZIP_DEFLATED) as cbz_file:
+            image_files = sorted([
+                f for f in image_folder_path.rglob('*') # rglobを使ってサブディレクトリも検索
+                if f.is_file() and f.suffix.lower() in ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
+            ], key=lambda x: x.name) # ファイル名でソート
+
+            if not image_files:
+                print(f"⚠️ {image_folder_path.name} に画像ファイルが見つかりませんでした。CBZは作成されません。")
+                return False
+
+            for img_file in image_files:
+                # CBZ内のパスは、image_folder_pathからの相対パスにする
+                arcname = img_file.relative_to(image_folder_path)
+                cbz_file.write(img_file, arcname)
+        print(f"✅ CBZアーカイブ作成成功: {output_cbz_path.name}")
+        return True
+    except Exception as e:
+        print(f"❌ CBZアーカイブ作成中にエラーが発生しました: {e}")
+        return False
 
 
 def fix_xhtml_content(xhtml_path: Path) -> bool:
@@ -314,21 +350,25 @@ def main():
             convert_mobi_file(item, output_dir, global_series_args)
             
         elif item.is_dir():
-            # 画像フォルダはそのまま処理
-            image_extensions = ('.jpg', '.jpeg', '.png')
+            # 画像フォルダはCBZを作成し、CBZを変換
+            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
             has_image = any(f.suffix.lower() in image_extensions for f in item.iterdir() if f.is_file())
             
             if has_image:
-                convert_jpeg_folder(item, output_dir, global_series_args)
+                cbz_output_path = temp_dir / f"{item.name}.cbz"
+                if create_cbz_from_folder(item, cbz_output_path):
+                    convert_cbz_file(cbz_output_path, output_dir, global_series_args)
+                else:
+                    print(f"スキップ: フォルダ '{item.name}' からCBZファイルを作成できませんでした。")
             else:
                 print(f"スキップ: フォルダ '{item.name}' は対応する画像ファイルを含まないため無視します。")
                 
         elif item.is_file() and item_suffix in ('.zip', '.rar'): 
-            # ZIP/RARファイルは一時ディレクトリに解凍し、解凍されたフォルダを処理
-            unpacked_path = extract_archive(item, temp_dir)
-            if unpacked_path:
-                # 解凍されたフォルダを画像フォルダとして変換
-                convert_jpeg_folder(unpacked_path, output_dir, global_series_args)
+            # ZIP/RARファイルは一時ディレクトリに解凍し、解凍されたフォルダからCBZを作成、CBZを変換
+            cbz_path_from_archive = extract_archive(item, temp_dir)
+            if cbz_path_from_archive:
+                convert_cbz_file(cbz_path_from_archive, output_dir, global_series_args)
+                # extract_archive内で一時展開フォルダは削除されるが、作成されたCBZファイルはtemp_dirに残るので、後でまとめて削除される
                 
         else:
             print(f"スキップ: '{item.name}' は対象外のファイル形式です。")
