@@ -4,8 +4,9 @@ import shutil
 import zipfile 
 import rarfile 
 import platform
+import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from bs4 import BeautifulSoup 
 
 # --- 設定 ---
@@ -36,6 +37,28 @@ def resolve_command(command_name: str) -> str:
 # Calibreのebook-convertコマンドの実行ファイル名（動的に解決）
 EBOOK_CONVERT_COMMAND = resolve_command("ebook-convert") 
 
+def extract_volume_code(filename: str) -> Optional[str]:
+    """
+    ファイル名から巻数を正規表現で抽出します。
+    """
+    # 拡張子を除去
+    stem = Path(filename).stem
+    
+    # パターン定義 (優先順)
+    patterns = [
+        r'(?i)(?:v|vol|volume)\.?\s*(\d+)',  # Vol.1, v01
+        r'第\s*(\d+)\s*巻',                  # 第1巻
+        r'\s(\d+)$',                         # 末尾の数字 (例: Title 01)
+        r'\s(\d+)\s',                        # 空白で囲まれた数字 (例: Title 01 Subtitle)
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, stem)
+        if match:
+            return match.group(1)
+            
+    return None 
+
 
 def get_series_info_interactively() -> List[str]:
     """
@@ -58,9 +81,19 @@ def get_series_info_interactively() -> List[str]:
 def get_series_index_interactively(filename: str) -> List[str]:
     """
     ユーザーから指定されたファイルの巻数をインタラクティブに取得します。（ファイルごとに適用）
+    ファイル名から自動検出できた場合は入力をスキップします。
     """
     print(f"\n--- ファイル: {filename} の巻数設定 ---")
     args: List[str] = []
+    
+    # 自動検出情報の試行
+    detected_volume = extract_volume_code(filename)
+    if detected_volume:
+        print(f"🔍 ファイル名から巻数を検出しました: {detected_volume}")
+        args.extend(["--series-index", detected_volume])
+        return args
+
+    # 自動検出できなかった場合は手動入力
     series_index = input("🔢 巻数 (シリーズインデックス) を入力してください (省略する場合はEnter): ").strip()
     if series_index and series_index.isdigit():
         args.extend(["--series-index", series_index])
