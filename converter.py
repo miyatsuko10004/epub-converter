@@ -4,14 +4,16 @@ import shutil
 import zipfile 
 import rarfile 
 import platform
+import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from bs4 import BeautifulSoup 
 
 # --- 設定 ---
 INPUT_DIR_NAME = "input"
 OUTPUT_DIR_NAME = "output"
 TEMP_DIR_NAME = "__temp_archive__" 
+DONE_DIR_NAME = "done" 
 
 def resolve_command(command_name: str) -> str:
     """
@@ -36,6 +38,44 @@ def resolve_command(command_name: str) -> str:
 # Calibreのebook-convertコマンドの実行ファイル名（動的に解決）
 EBOOK_CONVERT_COMMAND = resolve_command("ebook-convert") 
 
+def get_unique_path(directory: Path, filename: str) -> Path:
+    """
+    指定されたディレクトリ内で一意なパスを生成します。
+    同名のファイルが存在する場合、ファイル名にカウンタ (例: _1, _2) を付与します。
+    """
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    counter = 1
+    
+    unique_path = directory / filename
+    while unique_path.exists():
+        unique_path = directory / f"{stem}_{counter}{suffix}"
+        counter += 1
+        
+    return unique_path
+
+def extract_volume_code(filename: str) -> Optional[str]:
+    """
+    ファイル名から巻数を正規表現で抽出します。
+    """
+    # 拡張子を除去
+    stem = Path(filename).stem
+    
+    # パターン定義 (優先順)
+    patterns = [
+        r'(?i)(?:v|vol|volume)\.?\s*(\d+)',  # Vol.1, v01
+        r'第\s*(\d+)\s*巻',                  # 第1巻
+        r'\s(\d+)$',                         # 末尾の数字 (例: Title 01)
+        r'\s(\d+)\s',                        # 空白で囲まれた数字 (例: Title 01 Subtitle)
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, stem)
+        if match:
+            return match.group(1)
+            
+    return None 
+
 
 def get_series_info_interactively() -> List[str]:
     """
@@ -58,9 +98,19 @@ def get_series_info_interactively() -> List[str]:
 def get_series_index_interactively(filename: str) -> List[str]:
     """
     ユーザーから指定されたファイルの巻数をインタラクティブに取得します。（ファイルごとに適用）
+    ファイル名から自動検出できた場合は入力をスキップします。
     """
     print(f"\n--- ファイル: {filename} の巻数設定 ---")
     args: List[str] = []
+    
+    # 自動検出情報の試行
+    detected_volume = extract_volume_code(filename)
+    if detected_volume:
+        print(f"🔍 ファイル名から巻数を検出しました: {detected_volume}")
+        args.extend(["--series-index", detected_volume])
+        return args
+
+    # 自動検出できなかった場合は手動入力
     series_index = input("🔢 巻数 (シリーズインデックス) を入力してください (省略する場合はEnter): ").strip()
     if series_index and series_index.isdigit():
         args.extend(["--series-index", series_index])
@@ -106,7 +156,7 @@ def execute_conversion(input_path: Path, output_path: Path, extra_args: List[str
         return False
 
 
-def convert_mobi_file(mobi_file_path: Path, output_dir: Path, global_series_args: List[str]):
+def convert_mobi_file(mobi_file_path: Path, output_dir: Path, global_series_args: List[str]) -> bool:
     """単一のMOBIファイルをEPUBに変換します。（メタデータ設定を含む）"""
     
     base_name = mobi_file_path.stem 
@@ -123,10 +173,10 @@ def convert_mobi_file(mobi_file_path: Path, output_dir: Path, global_series_args
     file_series_index_args = get_series_index_interactively(mobi_file_path.name)
     extra_args.extend(file_series_index_args)
 
-    execute_conversion(mobi_file_path, output_epub_path, extra_args)
+    return execute_conversion(mobi_file_path, output_epub_path, extra_args)
 
 
-def convert_cbz_file(cbz_file_path: Path, output_dir: Path, global_series_args: List[str]):
+def convert_cbz_file(cbz_file_path: Path, output_dir: Path, global_series_args: List[str]) -> bool:
     """CBZファイルをEPUB（コミック形式推奨、メタデータ設定を含む）に変換します。"""
     
     base_name = cbz_file_path.stem 
@@ -146,7 +196,7 @@ def convert_cbz_file(cbz_file_path: Path, output_dir: Path, global_series_args: 
     file_series_index_args = get_series_index_interactively(cbz_file_path.name)
     extra_args.extend(file_series_index_args)
 
-    execute_conversion(cbz_file_path, output_epub_path, extra_args)
+    return execute_conversion(cbz_file_path, output_epub_path, extra_args)
 
 
 def extract_archive(archive_path: Path, temp_dir: Path) -> Path | None:
@@ -360,6 +410,11 @@ def main():
         shutil.rmtree(temp_dir)
     temp_dir.mkdir(parents=True, exist_ok=True)
 
+    # 完了フォルダの準備
+    done_dir = input_dir / DONE_DIR_NAME
+    if not done_dir.exists():
+        done_dir.mkdir(parents=True, exist_ok=True)
+
     # 🌟 バッチ処理開始前にシリーズ情報をインタラクティブに取得
     global_series_args = get_series_info_interactively()
 
@@ -367,11 +422,16 @@ def main():
     
     # 1. input内のすべての項目をチェック
     for item in input_dir.iterdir():
+        # doneフォルダ自体はスキップ
+        if item.name == DONE_DIR_NAME:
+            continue
+            
         item_suffix = item.suffix.lower()
+        success = False
         
-        if item.is_file() and item.suffix.lower() == '.mobi':
+        if item.is_file() and item_suffix == '.mobi':
             # MOBIファイルはそのまま処理
-            convert_mobi_file(item, output_dir, global_series_args)
+            success = convert_mobi_file(item, output_dir, global_series_args)
             
         elif item.is_dir():
             # 画像フォルダはCBZを作成し、CBZを変換
@@ -381,7 +441,7 @@ def main():
             if has_image:
                 cbz_output_path = temp_dir / f"{item.name}.cbz"
                 if create_cbz_from_folder(item, cbz_output_path):
-                    convert_cbz_file(cbz_output_path, output_dir, global_series_args)
+                    success = convert_cbz_file(cbz_output_path, output_dir, global_series_args)
                 else:
                     print(f"スキップ: フォルダ '{item.name}' からCBZファイルを作成できませんでした。")
             else:
@@ -391,12 +451,22 @@ def main():
             # ZIP/RARファイルは一時ディレクトリに解凍し、解凍されたフォルダからCBZを作成、CBZを変換
             cbz_path_from_archive = extract_archive(item, temp_dir)
             if cbz_path_from_archive:
-                convert_cbz_file(cbz_path_from_archive, output_dir, global_series_args)
+                success = convert_cbz_file(cbz_path_from_archive, output_dir, global_series_args)
                 # extract_archive内で一時展開フォルダは削除されるが、作成されたCBZファイルはtemp_dirに残るので、後でまとめて削除される
                 
         else:
             print(f"スキップ: '{item.name}' は対象外のファイル形式です。")
 
+        # 成功したらdoneフォルダへ移動
+        if success:
+            try:
+                destination_path = get_unique_path(done_dir, item.name)
+                shutil.move(str(item), str(destination_path))
+                print(f"✅ 完了移動: {item.name} を done フォルダに移動しました。 (保存名: {destination_path.name})")
+            except (OSError, PermissionError) as e:
+                print(f"⚠️ 移動失敗: {item.name} の移動中にファイルシステムエラーが発生しました: {e}")
+            except Exception as e:
+                print(f"❌ 予期せぬエラー: {item.name} の移動中に想定外のエラーが発生しました: {e}")
     
     print("\n--- 🔧 EPUBファイルの後処理（HTML修正と再パッケージ化）開始 ---")
     
