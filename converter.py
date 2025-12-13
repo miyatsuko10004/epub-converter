@@ -3,6 +3,7 @@ import subprocess
 import shutil 
 import zipfile 
 import rarfile 
+import platform
 from pathlib import Path
 from typing import List
 from bs4 import BeautifulSoup 
@@ -11,8 +12,29 @@ from bs4 import BeautifulSoup
 INPUT_DIR_NAME = "input"
 OUTPUT_DIR_NAME = "output"
 TEMP_DIR_NAME = "__temp_archive__" 
-# Calibreのebook-convertコマンドの実行ファイル名
-EBOOK_CONVERT_COMMAND = "ebook-convert" 
+
+def resolve_command(command_name: str) -> str:
+    """
+    コマンドのパスを解決します。
+    macOSの場合、標準的なインストール場所もチェックします。
+    """
+    # 1. PATHから探す
+    if shutil.which(command_name):
+        return command_name
+        
+    # 2. macOS固有のチェック
+    if platform.system() == 'Darwin':
+        if command_name == 'ebook-convert':
+            # Calibreの標準インストール先
+            mac_calibre_path = Path('/Applications/calibre.app/Contents/MacOS/ebook-convert')
+            if mac_calibre_path.exists():
+                return str(mac_calibre_path)
+                
+    # 見つからない場合はそのまま返し、実行時にエラーにするか、呼び出し元で判定
+    return command_name
+
+# Calibreのebook-convertコマンドの実行ファイル名（動的に解決）
+EBOOK_CONVERT_COMMAND = resolve_command("ebook-convert") 
 
 
 def get_series_info_interactively() -> List[str]:
@@ -170,6 +192,8 @@ def extract_archive(archive_path: Path, temp_dir: Path) -> Path | None:
     
     except rarfile.RarExecError:
         print(f"❌ RAR解凍エラー: 'unrar' コマンドが見つからないか、実行できませんでした。")
+        if platform.system() == 'Darwin':
+             print("macOSをご利用の場合: 'brew install rar' または 'brew install unrar' を実行してインストールしてください。")
         print("システムに 'unrar' ユーティリティがインストールされ、パスが通っているか確認してください。")
         return None
     except Exception as e:

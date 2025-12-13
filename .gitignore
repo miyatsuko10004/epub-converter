@@ -210,3 +210,4 @@ __marimo__/
 # Convert
 input/*
 output/*
+__temp_archive__
