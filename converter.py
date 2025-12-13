@@ -38,6 +38,22 @@ def resolve_command(command_name: str) -> str:
 # Calibreのebook-convertコマンドの実行ファイル名（動的に解決）
 EBOOK_CONVERT_COMMAND = resolve_command("ebook-convert") 
 
+def get_unique_path(directory: Path, filename: str) -> Path:
+    """
+    指定されたディレクトリ内で一意なパスを生成します。
+    同名のファイルが存在する場合、ファイル名にカウンタ (例: _1, _2) を付与します。
+    """
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    counter = 1
+    
+    unique_path = directory / filename
+    while unique_path.exists():
+        unique_path = directory / f"{stem}_{counter}{suffix}"
+        counter += 1
+        
+    return unique_path
+
 def extract_volume_code(filename: str) -> Optional[str]:
     """
     ファイル名から巻数を正規表現で抽出します。
@@ -444,10 +460,13 @@ def main():
         # 成功したらdoneフォルダへ移動
         if success:
             try:
-                shutil.move(str(item), str(done_dir / item.name))
-                print(f"✅ 完了移動: {item.name} を done フォルダに移動しました。")
+                destination_path = get_unique_path(done_dir, item.name)
+                shutil.move(str(item), str(destination_path))
+                print(f"✅ 完了移動: {item.name} を done フォルダに移動しました。 (保存名: {destination_path.name})")
+            except (OSError, PermissionError) as e:
+                print(f"⚠️ 移動失敗: {item.name} の移動中にファイルシステムエラーが発生しました: {e}")
             except Exception as e:
-                print(f"⚠️ 移動失敗: {item.name} の移動中にエラーが発生しました: {e}")
+                print(f"❌ 予期せぬエラー: {item.name} の移動中に想定外のエラーが発生しました: {e}")
     
     print("\n--- 🔧 EPUBファイルの後処理（HTML修正と再パッケージ化）開始 ---")
     
