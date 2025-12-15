@@ -211,3 +211,6 @@ __marimo__/
 input/*
 output/*
 __temp_archive__
+
+.gemini/
+gha-creds-*.json
